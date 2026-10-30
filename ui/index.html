@@ -1,0 +1,726 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Ar-condicionado</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #1b1e24;
+    --card: #22252c;
+    --card-hover: #292d35;
+    --line: #353943;
+    --line-soft: #2d3139;
+    --text: #f3f4f6;
+    --muted: #9aa0ab;
+    --dim: #6b717c;
+    --blue: #3b82f6;
+    --blue-hover: #4b8ff8;
+    --flow: #3b82f6;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Barlow", "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+    overflow: hidden;
+  }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  svg { display: block; }
+  .ico { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+
+  .screen { position: absolute; inset: 0; padding: 16px 16px 14px; display: flex; flex-direction: column; }
+  .hidden { display: none !important; }
+
+  /* ---------- cabeçalho ---------- */
+  .header { display: flex; justify-content: space-between; align-items: flex-start; }
+  .title { font-size: 16px; font-weight: 600; letter-spacing: .1px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 250px; }
+  .chips { display: flex; gap: 6px; margin-top: 9px; }
+  .chip { display: flex; align-items: center; gap: 5px; height: 24px; padding: 0 10px 0 8px; border: 1px solid var(--line); border-radius: 12px; font-size: 12.5px; font-weight: 600; }
+  .chip .ico { width: 13px; height: 13px; color: var(--muted); }
+  .power { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: #3a3e48; transition: background .2s, box-shadow .2s; flex: none; }
+  .power .ico { width: 20px; height: 20px; stroke-width: 2; }
+  .power.on { background: var(--blue); box-shadow: 0 4px 18px rgba(59,130,246,.45); }
+  .power:hover { filter: brightness(1.08); }
+
+  /* ---------- ilustração ---------- */
+  .unit { height: 178px; margin: 4px -16px 0; display: flex; justify-content: center; }
+  .unit svg { width: 300px; height: 178px; overflow: visible; }
+  .flow path { stroke: var(--flow); fill: none; stroke-linecap: round; stroke-dasharray: 22 12; animation: flow 1.6s linear infinite; }
+  .unit.off .flow { opacity: 0; }
+  .flow { transition: opacity .5s; }
+  @keyframes flow { to { stroke-dashoffset: -68; } }
+  .unit.off .vent-glow { opacity: 0; }
+  .unit.off .disp-text { opacity: 0; }
+
+  /* ---------- temperatura ---------- */
+  .temp-row { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; }
+  .round-btn { width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--line); background: var(--card); display: grid; place-items: center; transition: background .15s; }
+  .round-btn:hover { background: var(--card-hover); }
+  .round-btn .ico { width: 18px; height: 18px; stroke-width: 1.8; }
+  .temp { display: flex; align-items: flex-start; font-weight: 300; line-height: 1; }
+  .temp .val { font-size: 68px; letter-spacing: -1px; font-feature-settings: "tnum"; }
+  .temp .unit-c { font-size: 15px; font-weight: 400; margin: 6px 0 0 6px; color: #d7dae0; }
+
+  .slider { position: relative; margin: 18px 8px 0; height: 22px; }
+  .slider .track { position: absolute; left: 0; right: 0; top: 9px; height: 4px; border-radius: 2px; background: #3d414b; }
+  .slider .fill { position: absolute; left: 0; top: 9px; height: 4px; border-radius: 2px; background: var(--blue); }
+  .slider .thumb { position: absolute; top: 2px; width: 18px; height: 18px; margin-left: -9px; border-radius: 50%; background: #545a66; border: 3px solid var(--blue); box-shadow: 0 0 0 4px rgba(59,130,246,.18); }
+  .slider input { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; margin: 0; }
+  .ticks { display: flex; justify-content: space-between; margin: 4px 8px 0; }
+  .ticks i { width: 3px; height: 3px; border-radius: 50%; background: #5a606b; }
+  .ticks i.big { background: #8b919c; }
+  .tick-labels { position: relative; height: 14px; margin: 3px 8px 0; font-size: 10.5px; color: var(--muted); }
+  .tick-labels span { position: absolute; transform: translateX(-50%); }
+
+  /* ---------- modos ---------- */
+  .modes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-top: 14px; padding: 4px; border: 1px solid var(--line); border-radius: var(--radius); background: #1f2228; }
+  .mode { height: 52px; border-radius: 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; font-size: 12px; font-weight: 500; color: #c9ccd2; transition: background .15s; }
+  .mode .ico { width: 17px; height: 17px; }
+  .mode:hover { background: var(--card-hover); }
+  .mode.active { background: var(--blue); color: #fff; }
+  .mode:disabled { opacity: .3; cursor: default; background: none; }
+
+  /* ---------- cartões ---------- */
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+  .card { position: relative; height: 58px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--card); display: flex; align-items: center; padding: 0 12px 0 9px; gap: 9px; text-align: left; transition: background .15s; }
+  .card:hover { background: var(--card-hover); }
+  .card .box { width: 34px; height: 34px; border-radius: 9px; background: #353943; display: grid; place-items: center; flex: none; }
+  .card .box .ico { width: 18px; height: 18px; }
+  .card .lbl { font-size: 11.5px; color: var(--muted); }
+  .card .v { font-size: 14px; font-weight: 600; margin-top: 1px; }
+  .card .chev { position: absolute; right: 12px; top: 50%; margin-top: -7px; width: 14px; height: 14px; color: var(--dim); }
+  .card .txt { min-width: 0; flex: 1; }
+
+  .row3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
+  .toggle { height: 46px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--card); display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 13.5px; font-weight: 600; transition: background .15s, border-color .15s; }
+  .toggle .ico { width: 17px; height: 17px; }
+  .toggle:hover { background: var(--card-hover); }
+  .toggle.active { background: rgba(59,130,246,.16); border-color: var(--blue); color: #fff; }
+  .toggle.active .ico { color: #7fb0ff; }
+  .toggle:disabled, .card:disabled { opacity: .35; cursor: default; background: var(--card); }
+
+  .controls { transition: opacity .25s; }
+  .controls.off .dim-off { opacity: .4; pointer-events: none; }
+
+  /* ---------- rodapé ---------- */
+  .footer { margin-top: auto; display: flex; align-items: center; justify-content: space-between; padding: 0 4px 0 6px; height: 34px; }
+  .status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #c3c7ce; }
+  .status .ico { width: 16px; height: 16px; color: var(--blue); }
+  .status.err .ico { color: #f59e0b; }
+  .icon-btn { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; color: #c3c7ce; }
+  .icon-btn:hover { background: var(--card-hover); }
+
+  /* ---------- menus ---------- */
+  .menu { position: absolute; z-index: 20; min-width: 160px; padding: 5px; border: 1px solid var(--line); border-radius: 12px; background: #262a32; box-shadow: 0 12px 32px rgba(0,0,0,.5); max-height: 300px; overflow: auto; }
+  .menu::-webkit-scrollbar { width: 6px; }
+  .menu::-webkit-scrollbar-thumb { background: #444955; border-radius: 3px; }
+  .menu { scrollbar-width: thin; scrollbar-color: #444955 transparent; }
+  .menu button { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 12px; height: 34px; padding: 0 10px; border-radius: 8px; font-size: 13.5px; font-weight: 500; text-align: left; }
+  .menu button:hover { background: #31353f; }
+  .menu button.sel { color: #7fb0ff; }
+  .menu button.sel::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--blue); }
+
+  /* ---------- painéis ---------- */
+  .sheet { position: absolute; inset: 0; z-index: 30; background: var(--bg); padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .sheet h2 { font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .set-row { display: flex; align-items: center; justify-content: space-between; min-height: 50px; padding: 0 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--card); font-size: 14px; font-weight: 500; }
+  .set-row small { display: block; color: var(--muted); font-size: 11.5px; font-weight: 400; }
+  .switch { width: 38px; height: 22px; border-radius: 11px; background: #444955; position: relative; transition: background .2s; flex: none; }
+  .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .2s; }
+  .switch.on { background: var(--blue); }
+  .switch.on::after { transform: translateX(16px); }
+  select, input[type=text], input[type=email], input[type=password] {
+    width: 100%; height: 42px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line); background: #1f2228; color: var(--text); font: inherit; font-size: 14px; outline: none;
+  }
+  select:focus, input:focus { border-color: var(--blue); }
+  .btn { height: 44px; border-radius: 12px; font-size: 14px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; }
+  .btn.primary { background: var(--blue); color: #fff; }
+  .btn.primary:hover { background: var(--blue-hover); }
+  .btn.ghost { border: 1px solid var(--line); background: var(--card); }
+  .btn.ghost:hover { background: var(--card-hover); }
+  .btn.danger { color: #f87171; border: 1px solid #4a2c2f; background: #2a1f22; }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .muted { color: var(--muted); font-size: 12.5px; line-height: 1.45; }
+  .link { color: #7fb0ff; font-size: 12.5px; text-decoration: underline; cursor: pointer; }
+  .err-text { color: #fca5a5; font-size: 12.5px; min-height: 16px; }
+  .spacer { flex: 1; }
+
+  .center { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; }
+  .spinner { width: 34px; height: 34px; border-radius: 50%; border: 3px solid #333843; border-top-color: var(--blue); animation: spin .9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .toast { position: absolute; left: 16px; right: 16px; bottom: 54px; z-index: 40; padding: 10px 12px; border-radius: 10px; background: #3b2a1c; border: 1px solid #6b4a24; color: #fcd9a8; font-size: 12.5px; opacity: 0; transform: translateY(6px); transition: .25s; pointer-events: none; }
+  .toast.show { opacity: 1; transform: none; }
+  .close-x { position: absolute; top: 10px; right: 10px; z-index: 50; }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="i-thermo" viewBox="0 0 24 24"><path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z"/></symbol>
+    <symbol id="i-drop" viewBox="0 0 24 24"><path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z"/></symbol>
+    <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></symbol>
+    <symbol id="i-snow" viewBox="0 0 24 24"><path d="M2 12h20M12 2v20M20 16l-4-4 4-4M4 8l4 4-4 4M16 4l-4 4-4-4M8 20l4-4 4 4"/></symbol>
+    <symbol id="i-dry" viewBox="0 0 24 24"><path d="M7 16.3c2.2 0 4-1.83 4-4.05 0-1.16-.57-2.26-1.71-3.19S7.29 6.75 7 5.3c-.29 1.45-1.14 2.84-2.29 3.76S3 11.1 3 12.25c0 2.22 1.8 4.05 4 4.05z"/><path d="M12.56 6.6A10.97 10.97 0 0 0 14 3.02c.5 2.5 2 4.9 4 6.5s3 3.5 3 5.5a6.98 6.98 0 0 1-11.91 4.97"/></symbol>
+    <symbol id="i-fan" viewBox="0 0 24 24"><path d="M10.83 12a1.17 1.17 0 1 0 2.34 0 1.17 1.17 0 0 0-2.34 0Z"/><path d="M12 10.83c0-3.5-.5-7.83 2.33-7.83 3.5 0 4.67 3.5 2.34 7"/><path d="M13.17 12c3.5 0 7.83-.5 7.83 2.33 0 3.5-3.5 4.67-7 2.34"/><path d="M12 13.17c0 3.5.5 7.83-2.33 7.83-3.5 0-4.67-3.5-2.34-7"/><path d="M10.83 12c-3.5 0-7.83.5-7.83-2.33 0-3.5 3.5-4.67 7-2.34"/></symbol>
+    <symbol id="i-auto" viewBox="0 0 24 24"><path d="M9.94 15.5A2 2 0 0 0 8.5 14.06l-6.13-1.58a.5.5 0 0 1 0-.96L8.5 9.94A2 2 0 0 0 9.94 8.5l1.58-6.13a.5.5 0 0 1 .96 0L14.06 8.5A2 2 0 0 0 15.5 9.94l6.13 1.58a.5.5 0 0 1 0 .96L15.5 14.06a2 2 0 0 0-1.44 1.44l-1.58 6.13a.5.5 0 0 1-.96 0z"/><path d="M20 3v4M22 5h-4"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></symbol>
+    <symbol id="i-move" viewBox="0 0 24 24"><path d="M12 2v20M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"/></symbol>
+    <symbol id="i-leaf" viewBox="0 0 24 24"><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></symbol>
+    <symbol id="i-rocket" viewBox="0 0 24 24"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-warn" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+      <linearGradient id="g-face" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/><stop offset=".55" stop-color="#eef0f3"/><stop offset="1" stop-color="#d5d9df"/>
+    </linearGradient>
+    <linearGradient id="g-top" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#f6f7f9"/><stop offset="1" stop-color="#e3e6ea"/>
+    </linearGradient>
+    <linearGradient id="g-side" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#d4d8de"/><stop offset="1" stop-color="#b9bec6"/>
+    </linearGradient>
+    <linearGradient id="g-bottom" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#c9ced5"/><stop offset="1" stop-color="#aeb4bd"/>
+    </linearGradient>
+    <linearGradient id="g-flow" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="var(--flow)" stop-opacity=".95"/><stop offset="1" stop-color="var(--flow)" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="g-glow" cx=".5" cy="0" r=".7">
+      <stop offset="0" stop-color="var(--flow)" stop-opacity=".55"/><stop offset="1" stop-color="var(--flow)" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="p-grill" width="5" height="5" patternUnits="userSpaceOnUse">
+      <circle cx="2.5" cy="2.5" r="1" fill="#b5bbc4"/>
+    </pattern>
+  </defs>
+</svg>
+
+<!-- ===================== ilustração do aparelho (reutilizada) ===================== -->
+<template id="unit-tpl">
+  <svg viewBox="0 0 300 178">
+    <!-- sombra -->
+    <ellipse cx="150" cy="92" rx="118" ry="6" fill="#000" opacity=".25"/>
+    <!-- topo -->
+    <path d="M42 18 L250 10 L270 20 L58 30 Z" fill="url(#g-top)"/>
+    <!-- lateral direita -->
+    <path d="M250 10 L270 20 L268 72 L248 84 Z" fill="url(#g-side)"/>
+    <!-- frente -->
+    <path d="M42 18 L250 10 L248 84 L46 82 Q40 82 40 76 L40 24 Q40 18 42 18 Z" fill="url(#g-face)"/>
+    <!-- grade -->
+    <path d="M120 22 L242 17 L241 62 L120 63 Z" fill="url(#p-grill)" opacity=".9"/>
+    <path d="M44 24 L118 21.5 L118 63 L44 64 Z" fill="#fff" opacity=".35"/>
+    <!-- display -->
+    <rect x="206" y="64" width="30" height="11" rx="2.5" fill="#d9dee5" stroke="#c4cad2" stroke-width=".6"/>
+    <text class="disp-text" x="221" y="72.3" text-anchor="middle" font-size="7" font-family="Barlow, Segoe UI" font-weight="600" fill="#4f8ff7" id="disp">24°</text>
+    <!-- fundo / aleta -->
+    <path d="M46 82 L248 84 L246 92 L52 90 Z" fill="url(#g-bottom)"/>
+    <path d="M58 81 L232 82.5" stroke="#1f2329" stroke-width="5" stroke-linecap="round"/>
+    <path class="vent-glow" d="M62 81.5 L228 83" stroke="var(--flow)" stroke-width="1.4" stroke-linecap="round" opacity=".9" style="transition:opacity .5s"/>
+    <path d="M52 90 L246 92 L244 95 L58 93 Z" fill="#9aa1ab"/>
+    <!-- brilho de saída -->
+    <ellipse class="vent-glow" cx="145" cy="98" rx="95" ry="18" fill="url(#g-glow)" style="transition:opacity .5s"/>
+    <!-- fluxo de ar -->
+    <g class="flow" id="flow" stroke="url(#g-flow)"></g>
+  </svg>
+</template>
+
+<!-- ===================== tela de carregamento ===================== -->
+<section class="screen" id="scr-loading">
+  <div class="center">
+    <div class="spinner"></div>
+    <div class="muted" id="loading-text">Conectando ao LG ThinQ…</div>
+  </div>
+</section>
+
+<!-- ===================== erro de conexão ===================== -->
+<section class="screen hidden" id="scr-error">
+  <div class="center">
+    <svg class="ico" style="width:36px;height:36px;color:#f59e0b"><use href="#i-warn"/></svg>
+    <div style="font-weight:600;font-size:15px">Não foi possível conectar</div>
+    <div class="muted" id="error-text" style="max-width:290px"></div>
+    <button class="btn primary" style="width:200px" onclick="connect()">Tentar novamente</button>
+    <button class="btn ghost" style="width:200px" onclick="doLogout()">Entrar com outra conta</button>
+  </div>
+</section>
+
+<!-- ===================== login ===================== -->
+<section class="screen hidden" id="scr-login">
+  <div class="header pywebview-drag-region">
+    <div>
+      <div class="title">Ar-condicionado</div>
+      <div class="muted" style="margin-top:4px">Entre com sua conta LG ThinQ</div>
+    </div>
+    <button class="icon-btn" title="Fechar" onclick="api().hide()"><svg class="ico"><use href="#i-x"/></svg></button>
+  </div>
+  <div class="unit off" id="login-unit"></div>
+
+  <div id="login-main" style="display:flex;flex-direction:column;gap:10px;margin-top:6px">
+    <button class="btn primary" id="btn-browser" onclick="loginBrowser()">Entrar com a conta LG</button>
+    <div class="muted" style="text-align:center">Abre a página oficial da LG. Funciona também com Google, Apple e Facebook.</div>
+    <button class="btn ghost" onclick="showLoginForm()">Entrar com e-mail e senha</button>
+    <div class="err-text" id="login-err"></div>
+  </div>
+
+  <form id="login-form" class="hidden" style="display:flex;flex-direction:column;gap:10px;margin-top:6px" onsubmit="loginPassword(event)">
+    <input type="email" id="lg-user" placeholder="E-mail da conta LG" required>
+    <input type="password" id="lg-pass" placeholder="Senha" required>
+    <button class="btn primary" id="btn-pass" type="submit">Entrar</button>
+    <div class="muted">Somente contas LG (não Google/Apple). Se falhar, aceite os termos pendentes no app LG ThinQ do celular.</div>
+    <div class="err-text" id="login-err2"></div>
+    <span class="link" onclick="showLoginMain()">Voltar</span>
+  </form>
+
+  <div class="spacer"></div>
+  <span class="link" style="text-align:center" onclick="showUrlLogin()">Colar URL de retorno manualmente</span>
+</section>
+
+<!-- ===================== painel principal ===================== -->
+<section class="screen hidden" id="scr-main">
+  <div class="header pywebview-drag-region">
+    <div style="min-width:0">
+      <div class="title" id="dev-name">Ar-condicionado</div>
+      <div class="chips">
+        <div class="chip" id="chip-temp"><svg class="ico"><use href="#i-thermo"/></svg><span id="room-temp">--°</span></div>
+        <div class="chip" id="chip-hum"><svg class="ico"><use href="#i-drop"/></svg><span id="humidity">--%</span></div>
+      </div>
+    </div>
+    <button class="power" id="btn-power" title="Ligar/Desligar" onclick="togglePower()"><svg class="ico"><use href="#i-power"/></svg></button>
+  </div>
+
+  <div class="unit off" id="main-unit"></div>
+
+  <div class="controls" id="controls">
+    <div class="dim-off">
+      <div class="temp-row">
+        <button class="round-btn" onclick="stepTemp(-1)" title="Diminuir"><svg class="ico"><use href="#i-minus"/></svg></button>
+        <div class="temp"><span class="val" id="temp-val">--</span><span class="unit-c">°C</span></div>
+        <button class="round-btn" onclick="stepTemp(1)" title="Aumentar"><svg class="ico"><use href="#i-plus"/></svg></button>
+      </div>
+      <div class="slider">
+        <div class="track"></div><div class="fill" id="sl-fill"></div><div class="thumb" id="sl-thumb"></div>
+        <input type="range" id="sl" min="16" max="30" step="1" value="24">
+      </div>
+      <div class="ticks" id="ticks"></div>
+      <div class="tick-labels" id="tick-labels"></div>
+
+      <div class="modes" id="modes">
+        <button class="mode" data-mode="COOL"><svg class="ico"><use href="#i-snow"/></svg>Frio</button>
+        <button class="mode" data-mode="DRY"><svg class="ico"><use href="#i-dry"/></svg>Seco</button>
+        <button class="mode" data-mode="FAN"><svg class="ico"><use href="#i-fan"/></svg>Ventilar</button>
+        <button class="mode" data-mode="AUTO"><svg class="ico"><use href="#i-auto"/></svg>Auto</button>
+      </div>
+
+      <div class="row2">
+        <button class="card" id="card-fan" onclick="openMenu(this, 'fan')">
+          <div class="box"><svg class="ico"><use href="#i-fan"/></svg></div>
+          <div class="txt"><div class="lbl">Vento</div><div class="v" id="fan-val">--</div></div>
+          <svg class="ico chev"><use href="#i-chev"/></svg>
+        </button>
+        <button class="card" id="card-dir" onclick="openMenu(this, 'direction')">
+          <div class="box"><svg class="ico"><use href="#i-move"/></svg></div>
+          <div class="txt"><div class="lbl">Direção</div><div class="v" id="dir-val">--</div></div>
+          <svg class="ico chev"><use href="#i-chev"/></svg>
+        </button>
+      </div>
+
+      <div class="row3">
+        <button class="toggle" id="tg-airclean" onclick="toggleFeature('airclean')"><svg class="ico"><use href="#i-leaf"/></svg>Ionizador</button>
+        <button class="toggle" id="tg-sleep" onclick="openMenu(this, 'sleep')"><svg class="ico"><use href="#i-moon"/></svg><span id="sleep-lbl">Sono</span></button>
+        <button class="toggle" id="tg-jet" onclick="toggleFeature('jet')"><svg class="ico"><use href="#i-rocket"/></svg>Turbo</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div class="status" id="status"><svg class="ico"><use href="#i-shield" id="status-ico"/></svg><span id="status-text">Conectado ao LG ThinQ</span></div>
+    <button class="icon-btn" title="Configurações" onclick="openSettings()"><svg class="ico"><use href="#i-sliders"/></svg></button>
+  </div>
+</section>
+
+<!-- ===================== configurações ===================== -->
+<section class="sheet hidden" id="sheet-settings">
+  <h2><button class="icon-btn" onclick="closeSheets()" style="margin-left:-8px"><svg class="ico"><use href="#i-back"/></svg></button>Configurações</h2>
+  <div id="device-picker" class="hidden" style="display:flex;flex-direction:column;gap:6px">
+    <div class="muted">Aparelho</div>
+    <select id="dev-select" onchange="selectDevice(this.value)"></select>
+  </div>
+  <div class="set-row" onclick="toggleSetting('autohide')">
+    <div>Fechar ao clicar fora<small>Esconde o painel na bandeja do sistema</small></div><div class="switch" id="sw-autohide"></div>
+  </div>
+  <div class="set-row" onclick="toggleSetting('autostart')">
+    <div>Iniciar com o Windows<small>Fica disponível na bandeja</small></div><div class="switch" id="sw-autostart"></div>
+  </div>
+  <button class="btn ghost" onclick="manualRefresh()">Atualizar agora</button>
+  <div class="spacer"></div>
+  <button class="btn danger" onclick="doLogout()">Sair da conta LG</button>
+  <button class="btn ghost" onclick="api().quit()">Fechar aplicativo</button>
+</section>
+
+<!-- ===================== login por URL ===================== -->
+<section class="sheet hidden" id="sheet-url">
+  <h2><button class="icon-btn" onclick="closeSheets()" style="margin-left:-8px"><svg class="ico"><use href="#i-back"/></svg></button>Login pela URL</h2>
+  <div class="muted">1. Clique em “Abrir página de login” e entre na sua conta LG no navegador.<br>2. Depois do login a página fica em branco: copie o endereço completo da barra do navegador e cole abaixo.</div>
+  <button class="btn ghost" onclick="openLoginInBrowser()">Abrir página de login</button>
+  <input type="text" id="url-input" placeholder="Cole aqui a URL de retorno">
+  <button class="btn primary" id="btn-url" onclick="loginUrl()">Entrar</button>
+  <div class="err-text" id="url-err"></div>
+</section>
+
+<div class="toast" id="toast"></div>
+<div class="menu hidden" id="menu"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const api = () => window.pywebview.api;
+
+let S = null;            // último estado recebido
+let pending = {};        // valores alterados localmente aguardando confirmação
+let tempTimer = null;
+let pollTimer = null;
+let retryTimer = null;
+let settings = {};
+
+const MODE_COLORS = { COOL: "#3b82f6", DRY: "#22c1d6", FAN: "#94a3b8", AUTO: "#8b7cf6", HEAT: "#f97316" };
+
+/* ---------- ilustração ---------- */
+function mountUnit(target) {
+  target.appendChild($("unit-tpl").content.cloneNode(true));
+  // fluxo de ar: linhas curvas que saem da aleta e abrem em leque
+  const g = target.querySelector(".flow");
+  const n = 22;
+  for (let i = 0; i < n; i++) {
+    const t = i / (n - 1);
+    const x0 = 66 + t * 160;
+    const spread = (t - 0.5) * 70;
+    const len = 52 + Math.sin(t * Math.PI) * 26 + (i % 3) * 6;
+    const x1 = x0 + spread * 0.35, y1 = 98 + len * 0.35;
+    const x2 = x0 + spread, y2 = 92 + len;
+    const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    p.setAttribute("d", `M${x0} 86 Q${x1} ${y1} ${x2} ${y2}`);
+    p.setAttribute("stroke-width", (i % 2 ? 1.6 : 2.4).toString());
+    p.style.animationDelay = `${-(i * 0.37) % 1.6}s`;
+    p.style.animationDuration = `${1.3 + (i % 4) * 0.15}s`;
+    p.style.opacity = (0.55 + (i % 3) * 0.2).toString();
+    g.appendChild(p);
+  }
+}
+
+/* ---------- navegação ---------- */
+function show(id) {
+  for (const s of document.querySelectorAll(".screen")) s.classList.toggle("hidden", s.id !== id);
+}
+function closeSheets() { for (const s of document.querySelectorAll(".sheet")) s.classList.add("hidden"); }
+
+let toastTimer;
+function toast(msg) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 4000);
+}
+
+/* ---------- inicialização ---------- */
+window.addEventListener("pywebviewready", async () => {
+  const info = await api().init();
+  settings = info.settings;
+  if (info.logged_in) connect(); else show("scr-login");
+});
+
+window.addEventListener("blur", () => { closeMenu(); api().on_blur(); });
+window.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeMenu(); closeSheets(); } });
+window.onShown = () => { if (S && S.ready) manualRefresh(true); };
+
+async function connect() {
+  show("scr-loading");
+  $("loading-text").textContent = "Conectando ao LG ThinQ…";
+  const r = await api().connect();
+  clearTimeout(retryTimer);
+  if (!r.ok) {
+    $("error-text").textContent = r.error;
+    show("scr-error");
+    // tentar de novo sozinho mais tarde (enquanto a LG mantém a pausa, nada é enviado)
+    retryTimer = setTimeout(connect, 10 * 60 * 1000);
+    return;
+  }
+  show("scr-main");
+  render(r.state);
+  startPolling();
+}
+
+function startPolling() {
+  clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    if (Object.keys(pending).length) return;
+    render(await api().get_state());
+  }, 8000);
+}
+
+async function manualRefresh(silent) {
+  if (!silent) closeSheets();
+  render(await api().refresh());
+}
+
+/* ---------- login ---------- */
+function showLoginForm() { $("login-main").classList.add("hidden"); $("login-form").classList.remove("hidden"); $("lg-user").focus(); }
+function showLoginMain() { $("login-form").classList.add("hidden"); $("login-main").classList.remove("hidden"); }
+function showUrlLogin() { closeSheets(); $("sheet-url").classList.remove("hidden"); }
+
+async function loginBrowser() {
+  const b = $("btn-browser");
+  b.disabled = true; b.textContent = "Aguardando login…"; $("login-err").textContent = "";
+  const r = await api().login_browser();
+  b.disabled = false; b.textContent = "Entrar com a conta LG";
+  if (r.ok) connect(); else $("login-err").textContent = r.error;
+}
+
+async function loginPassword(e) {
+  e.preventDefault();
+  const b = $("btn-pass");
+  b.disabled = true; b.textContent = "Entrando…"; $("login-err2").textContent = "";
+  const r = await api().login_password($("lg-user").value, $("lg-pass").value);
+  b.disabled = false; b.textContent = "Entrar";
+  if (r.ok) { $("lg-pass").value = ""; connect(); } else $("login-err2").textContent = r.error;
+}
+
+async function openLoginInBrowser() {
+  // a página aberta na janela do app também captura a URL sozinha
+  loginBrowser();
+}
+
+async function loginUrl() {
+  const b = $("btn-url");
+  b.disabled = true; $("url-err").textContent = "";
+  const r = await api().login_url($("url-input").value);
+  b.disabled = false;
+  if (r.ok) { closeSheets(); connect(); } else $("url-err").textContent = r.error;
+}
+
+async function doLogout() {
+  clearInterval(pollTimer);
+  closeSheets();
+  await api().logout();
+  S = null;
+  showLoginMain();
+  show("scr-login");
+}
+
+/* ---------- renderização ---------- */
+function fmtTemp(v) {
+  if (v == null) return "--";
+  return Number.isInteger(v) ? String(v) : String(v).replace(".", ",");
+}
+
+function val(key) { return key in pending ? pending[key] : S[key]; }
+
+function render(state) {
+  if (!state || !state.ready) return;
+  S = state;
+  const on = !!val("is_on");
+  const mode = val("mode");
+  const target = val("target_temp");
+
+  $("dev-name").textContent = S.name;
+  $("room-temp").textContent = S.room_temp != null ? `${Math.round(S.room_temp)}°` : "--°";
+  $("chip-temp").classList.toggle("hidden", S.room_temp == null);
+  $("humidity").textContent = S.humidity != null ? `${Math.round(S.humidity)}%` : "--%";
+  $("chip-hum").classList.toggle("hidden", S.humidity == null);
+
+  $("btn-power").classList.toggle("on", on);
+  $("controls").classList.toggle("off", !on);
+  const unit = $("main-unit");
+  unit.classList.toggle("off", !on);
+  document.documentElement.style.setProperty("--flow", MODE_COLORS[mode] || MODE_COLORS.COOL);
+  unit.querySelector("#disp").textContent = `${fmtTemp(target)}°`;
+
+  // temperatura e slider
+  $("temp-val").textContent = mode === "FAN" ? "--" : fmtTemp(target);
+  const sl = $("sl");
+  sl.min = S.min_temp; sl.max = S.max_temp; sl.step = S.temp_step;
+  if (target != null && document.activeElement !== sl) sl.value = target;
+  paintSlider();
+  buildTicks();
+
+  // modos
+  for (const b of document.querySelectorAll(".mode")) {
+    const m = b.dataset.mode;
+    b.disabled = !S.modes[m];
+    b.classList.toggle("active", m === mode);
+  }
+
+  // vento / direção
+  const fan = S.fan_speeds.find((f) => f.key === val("fan_speed"));
+  $("fan-val").textContent = fan ? fan.label : "--";
+  $("card-fan").disabled = !S.fan_speeds.length;
+  const dir = S.directions.find((d) => d.key === val("direction"));
+  $("dir-val").textContent = dir ? dir.label : "--";
+  $("card-dir").disabled = S.directions.length < 2;
+
+  // recursos
+  $("tg-airclean").disabled = !S.airclean_supported;
+  $("tg-airclean").classList.toggle("active", !!val("airclean"));
+  $("tg-jet").disabled = !S.jet_supported || (on && !S.jet_available);
+  $("tg-jet").classList.toggle("active", !!val("jet"));
+  const sleep = val("sleep_time") || 0;
+  $("tg-sleep").disabled = on && !S.sleep_available;
+  $("tg-sleep").classList.toggle("active", sleep > 0);
+  $("sleep-lbl").textContent = sleep > 0 ? `Sono ${fmtHours(sleep)}` : "Sono";
+
+  // status
+  const ok = S.online;
+  $("status").classList.toggle("err", !ok);
+  $("status-ico").setAttribute("href", ok ? "#i-shield" : "#i-warn");
+  $("status-text").textContent = ok ? "Conectado ao LG ThinQ" : S.blocked ? "Pausado pela LG" : "Aparelho offline";
+  $("status").title = S.error || "";
+}
+
+function fmtHours(min) {
+  const h = Math.floor(min / 60), m = min % 60;
+  return h && m ? `${h}h${m}` : h ? `${h}h` : `${m}min`;
+}
+
+function paintSlider() {
+  const sl = $("sl");
+  const pct = (sl.value - sl.min) / (sl.max - sl.min) * 100;
+  $("sl-fill").style.width = pct + "%";
+  $("sl-thumb").style.left = pct + "%";
+}
+
+let ticksFor = "";
+function buildTicks() {
+  const key = `${S.min_temp}-${S.max_temp}`;
+  if (ticksFor === key) return;
+  ticksFor = key;
+  const min = S.min_temp, max = S.max_temp, mid = Math.round((min + max) / 2);
+  const ticks = $("ticks"); ticks.innerHTML = "";
+  for (let t = min; t <= max; t++) {
+    const i = document.createElement("i");
+    if (t === min || t === max || t === mid) i.className = "big";
+    ticks.appendChild(i);
+  }
+  const labels = $("tick-labels"); labels.innerHTML = "";
+  for (const t of [min, mid, max]) {
+    const s = document.createElement("span");
+    s.textContent = `${t}°`;
+    s.style.left = `${(t - min) / (max - min) * 100}%`;
+    labels.appendChild(s);
+  }
+}
+
+/* ---------- comandos ---------- */
+async function send(name, value, key) {
+  pending[key] = value;
+  render(S);
+  const r = await api().command(name, value);
+  delete pending[key];
+  if (!r.ok) toast(r.error);
+  render(r.state);
+}
+
+function togglePower() { send("power", !val("is_on"), "is_on"); }
+
+function setTemp(v) {
+  v = Math.min(S.max_temp, Math.max(S.min_temp, v));
+  pending.target_temp = v;
+  render(S);
+  clearTimeout(tempTimer);
+  tempTimer = setTimeout(() => send("temp", v, "target_temp"), 600);
+}
+function stepTemp(dir) {
+  const cur = val("target_temp") ?? 24;
+  setTemp(Math.round((cur + dir * S.temp_step) * 10) / 10);
+}
+$("sl").addEventListener("input", (e) => { paintSlider(); setTemp(Number(e.target.value)); });
+
+$("modes").addEventListener("click", (e) => {
+  const b = e.target.closest(".mode");
+  if (b && !b.disabled && b.dataset.mode !== val("mode")) send("mode", b.dataset.mode, "mode");
+});
+
+function toggleFeature(name) { send(name, !val(name), name); }
+
+/* ---------- menus suspensos ---------- */
+let menuFor = null;
+function openMenu(anchor, kind) {
+  if (menuFor === anchor) return closeMenu();
+  let items, current, onPick;
+  if (kind === "fan") {
+    items = S.fan_speeds; current = val("fan_speed");
+    onPick = (k) => send("fan", k, "fan_speed");
+  } else if (kind === "direction") {
+    items = S.directions; current = val("direction");
+    onPick = (k) => send("direction", k, "direction");
+  } else {
+    const [lo, hi] = S.sleep_range;
+    items = [{ key: 0, label: "Desligado" }];
+    for (let m = 60; m <= hi; m += 60) if (m >= lo) items.push({ key: m, label: fmtHours(m) });
+    current = val("sleep_time") || 0;
+    onPick = (k) => send("sleep", Number(k), "sleep_time");
+  }
+  const menu = $("menu");
+  menu.innerHTML = "";
+  for (const it of items) {
+    const b = document.createElement("button");
+    b.textContent = it.label;
+    if (it.key === current) b.className = "sel";
+    b.onclick = (ev) => { ev.stopPropagation(); closeMenu(); onPick(it.key); };
+    menu.appendChild(b);
+  }
+  menu.classList.remove("hidden");
+  const r = anchor.getBoundingClientRect();
+  menu.style.minWidth = r.width + "px";
+  menu.style.left = Math.min(r.left, window.innerWidth - menu.offsetWidth - 8) + "px";
+  menu.style.top = Math.max(8, r.top - menu.offsetHeight - 6) + "px";
+  menuFor = anchor;
+}
+function closeMenu() { $("menu").classList.add("hidden"); menuFor = null; }
+document.addEventListener("mousedown", (e) => {
+  if (menuFor && !$("menu").contains(e.target) && !menuFor.contains(e.target)) closeMenu();
+});
+
+/* ---------- configurações ---------- */
+function openSettings() {
+  const pick = $("device-picker");
+  pick.classList.toggle("hidden", !S || S.devices.length < 2);
+  if (S) {
+    $("dev-select").innerHTML = S.devices.map((d) =>
+      `<option value="${d.id}" ${d.id === S.device_id ? "selected" : ""}>${d.name} (${d.model})</option>`).join("");
+  }
+  paintSettings();
+  $("sheet-settings").classList.remove("hidden");
+}
+function paintSettings() {
+  $("sw-autohide").classList.toggle("on", !!settings.autohide);
+  $("sw-autostart").classList.toggle("on", !!settings.autostart);
+}
+async function toggleSetting(key) {
+  settings = await api().set_setting(key, !settings[key]);
+  paintSettings();
+}
+async function selectDevice(id) {
+  closeSheets();
+  show("scr-loading");
+  const r = await api().select_device(id);
+  if (!r.ok) { $("error-text").textContent = r.error; show("scr-error"); return; }
+  show("scr-main");
+  render(r.state);
+}
+
+mountUnit($("main-unit"));
+mountUnit($("login-unit"));
+</script>
+</body>
+</html>

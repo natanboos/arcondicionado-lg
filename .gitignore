@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Release original do ha-smartthinq-sensors (baixável do GitHub; a cópia usada,
+# já com as correções, fica em wideq/)
+vendor/
+
+# Configuração local, tokens e logs (o app grava em ~/.arcondicionado-lg,
+# mas por garantia nada disso entra no repositório)
+config.json
+*.log
+.arcondicionado-lg/
+
+# Editores e sistema
+.vscode/
+.idea/
+.claude/
+*.swp
+Thumbs.db
+desktop.ini
