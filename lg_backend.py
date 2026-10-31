@@ -48,6 +48,8 @@ ERROR_MESSAGES = {
     "1218": "Token inválido. Gere um novo token pessoal no site da LG.",
     "1302": "Token não encontrado. Gere um novo token pessoal no site da LG.",
     "1304": "Há termos de uso pendentes. Abra o app LG ThinQ no celular e aceite.",
+    "1309": "Token inválido ou sem permissão. Copie o token inteiro e marque todas as "
+            "permissões ao criá-lo.",
     "1306": "Limite de consultas da LG atingido. O app espera um pouco e tenta de novo.",
     "1222": "O ar-condicionado está desconectado do Wi-Fi.",
 }

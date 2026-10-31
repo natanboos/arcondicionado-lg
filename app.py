@@ -273,8 +273,8 @@ def main():
     )
     tray.run_detached()
 
-    webview.start(icon=str(ICON_FILE), private_mode=False,
-                  storage_path=str(CONFIG_DIR / "webview"))
+    # modo privado: sem cache em disco, assim a interface nunca fica numa versão antiga
+    webview.start(icon=str(ICON_FILE), private_mode=True)
 
 
 if __name__ == "__main__":
