@@ -252,7 +252,7 @@
     <div style="font-weight:600;font-size:15px">Não foi possível conectar</div>
     <div class="muted" id="error-text" style="max-width:290px"></div>
     <button class="btn primary" style="width:200px" onclick="connect()">Tentar novamente</button>
-    <button class="btn ghost" style="width:200px" onclick="doLogout()">Entrar com outra conta</button>
+    <button class="btn ghost" style="width:200px" onclick="doLogout()">Trocar token da LG</button>
   </div>
 </section>
 
@@ -261,30 +261,20 @@
   <div class="header pywebview-drag-region">
     <div>
       <div class="title">Ar-condicionado</div>
-      <div class="muted" style="margin-top:4px">Entre com sua conta LG ThinQ</div>
+      <div class="muted" style="margin-top:4px">Conecte sua conta LG ThinQ</div>
     </div>
     <button class="icon-btn" title="Fechar" onclick="api().hide()"><svg class="ico"><use href="#i-x"/></svg></button>
   </div>
   <div class="unit off" id="login-unit"></div>
 
-  <div id="login-main" style="display:flex;flex-direction:column;gap:10px;margin-top:6px">
-    <button class="btn primary" id="btn-browser" onclick="loginBrowser()">Entrar com a conta LG</button>
-    <div class="muted" style="text-align:center">Abre a página oficial da LG. Funciona também com Google, Apple e Facebook.</div>
-    <button class="btn ghost" onclick="showLoginForm()">Entrar com e-mail e senha</button>
+  <form id="login-form" style="display:flex;flex-direction:column;gap:10px;margin-top:2px" onsubmit="loginPat(event)">
+    <div class="muted">A LG libera o controle pelo PC com um <b>token pessoal</b> gratuito, criado uma única vez:</div>
+    <div class="muted">1. Abra o site e entre com a sua conta LG.<br>2. Clique em <b>ADD NEW TOKEN</b>, marque todas as permissões e crie.<br>3. Copie o token e cole aqui.</div>
+    <button class="btn ghost" type="button" onclick="api().open_pat_site()">Abrir site do token da LG</button>
+    <input type="password" id="pat-input" placeholder="Cole aqui o token pessoal" autocomplete="off" required>
+    <button class="btn primary" id="btn-pat" type="submit">Entrar</button>
     <div class="err-text" id="login-err"></div>
-  </div>
-
-  <form id="login-form" class="hidden" style="display:flex;flex-direction:column;gap:10px;margin-top:6px" onsubmit="loginPassword(event)">
-    <input type="email" id="lg-user" placeholder="E-mail da conta LG" required>
-    <input type="password" id="lg-pass" placeholder="Senha" required>
-    <button class="btn primary" id="btn-pass" type="submit">Entrar</button>
-    <div class="muted">Somente contas LG (não Google/Apple). Se falhar, aceite os termos pendentes no app LG ThinQ do celular.</div>
-    <div class="err-text" id="login-err2"></div>
-    <span class="link" onclick="showLoginMain()">Voltar</span>
   </form>
-
-  <div class="spacer"></div>
-  <span class="link" style="text-align:center" onclick="showUrlLogin()">Colar URL de retorno manualmente</span>
 </section>
 
 <!-- ===================== painel principal ===================== -->
@@ -365,19 +355,10 @@
   </div>
   <button class="btn ghost" onclick="manualRefresh()">Atualizar agora</button>
   <div class="spacer"></div>
-  <button class="btn danger" onclick="doLogout()">Sair da conta LG</button>
+  <button class="btn danger" onclick="doLogout()">Trocar token da LG</button>
   <button class="btn ghost" onclick="api().quit()">Fechar aplicativo</button>
 </section>
 
-<!-- ===================== login por URL ===================== -->
-<section class="sheet hidden" id="sheet-url">
-  <h2><button class="icon-btn" onclick="closeSheets()" style="margin-left:-8px"><svg class="ico"><use href="#i-back"/></svg></button>Login pela URL</h2>
-  <div class="muted">1. Clique em “Abrir página de login” e entre na sua conta LG no navegador.<br>2. Depois do login a página fica em branco: copie o endereço completo da barra do navegador e cole abaixo.</div>
-  <button class="btn ghost" onclick="openLoginInBrowser()">Abrir página de login</button>
-  <input type="text" id="url-input" placeholder="Cole aqui a URL de retorno">
-  <button class="btn primary" id="btn-url" onclick="loginUrl()">Entrar</button>
-  <div class="err-text" id="url-err"></div>
-</section>
 
 <div class="toast" id="toast"></div>
 <div class="menu hidden" id="menu"></div>
@@ -475,38 +456,13 @@ async function manualRefresh(silent) {
 }
 
 /* ---------- login ---------- */
-function showLoginForm() { $("login-main").classList.add("hidden"); $("login-form").classList.remove("hidden"); $("lg-user").focus(); }
-function showLoginMain() { $("login-form").classList.add("hidden"); $("login-main").classList.remove("hidden"); }
-function showUrlLogin() { closeSheets(); $("sheet-url").classList.remove("hidden"); }
-
-async function loginBrowser() {
-  const b = $("btn-browser");
-  b.disabled = true; b.textContent = "Aguardando login…"; $("login-err").textContent = "";
-  const r = await api().login_browser();
-  b.disabled = false; b.textContent = "Entrar com a conta LG";
-  if (r.ok) connect(); else $("login-err").textContent = r.error;
-}
-
-async function loginPassword(e) {
+async function loginPat(e) {
   e.preventDefault();
-  const b = $("btn-pass");
-  b.disabled = true; b.textContent = "Entrando…"; $("login-err2").textContent = "";
-  const r = await api().login_password($("lg-user").value, $("lg-pass").value);
+  const b = $("btn-pat");
+  b.disabled = true; b.textContent = "Verificando…"; $("login-err").textContent = "";
+  const r = await api().login_pat($("pat-input").value);
   b.disabled = false; b.textContent = "Entrar";
-  if (r.ok) { $("lg-pass").value = ""; connect(); } else $("login-err2").textContent = r.error;
-}
-
-async function openLoginInBrowser() {
-  // a página aberta na janela do app também captura a URL sozinha
-  loginBrowser();
-}
-
-async function loginUrl() {
-  const b = $("btn-url");
-  b.disabled = true; $("url-err").textContent = "";
-  const r = await api().login_url($("url-input").value);
-  b.disabled = false;
-  if (r.ok) { closeSheets(); connect(); } else $("url-err").textContent = r.error;
+  if (r.ok) { $("pat-input").value = ""; connect(); } else $("login-err").textContent = r.error;
 }
 
 async function doLogout() {
@@ -514,7 +470,6 @@ async function doLogout() {
   closeSheets();
   await api().logout();
   S = null;
-  showLoginMain();
   show("scr-login");
 }
 

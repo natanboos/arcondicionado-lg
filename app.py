@@ -7,18 +7,17 @@ import logging
 import math
 import os
 import sys
-import threading
 import time
+import webbrowser
 import winreg
 from ctypes import wintypes
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
 
 import pystray
 import webview
 from PIL import Image, ImageDraw
 
-from lg_backend import CONFIG_DIR, LGBackend, save_config
+from lg_backend import CONFIG_DIR, PAT_URL, LGBackend, save_config
 
 APP_DIR = Path(__file__).resolve().parent
 UI_FILE = APP_DIR / "ui" / "index.html"
@@ -63,19 +62,6 @@ def style_native_window(hwnd: int) -> None:
     user32.SetWindowLongW(hwnd, -20, (ex_style | 0x80) & ~0x40000)  # TOOLWINDOW, sem APPWINDOW
 
 
-def is_login_callback(url: str) -> bool:
-    """True só quando o navegador chegou na página de retorno com os dados do login.
-
-    A página de login já leva a URL de retorno como parâmetro (callback_url=...iabClose),
-    então é preciso olhar o caminho e os parâmetros, não o texto inteiro.
-    """
-    parsed = urlparse(url)
-    if not parsed.path.rstrip("/").endswith("iabClose"):
-        return False
-    params = parse_qs(parsed.query)
-    return any(k in params for k in ("code", "refresh_token", "user_thirdparty_token"))
-
-
 def make_icon_image(size: int = 64) -> Image.Image:
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
@@ -104,6 +90,7 @@ class Api:
             self._window.hide()
             self._visible = False
             self._hidden_at = time.time()
+            self._backend.set_panel_visible(False)
 
     def on_blur(self):
         # ao abrir pela bandeja o Windows devolve o foco à barra de tarefas por um instante
@@ -124,6 +111,7 @@ class Api:
     def show(self):
         self._shown_at = time.time()
         self._visible = True
+        self._backend.set_panel_visible(True)
         x, y = flyout_position()
         self._window.move(x, y)
         self._window.show()
@@ -143,72 +131,17 @@ class Api:
     def init(self):
         return {"logged_in": self._backend.logged_in, "settings": self.get_settings()}
 
-    def login_password(self, user, password):
+    def login_pat(self, pat):
         try:
-            self._backend.login_with_password(user, password)
+            self._backend.login_with_pat(pat)
             return {"ok": True}
         except Exception as ex:  # pylint: disable=broad-except
-            _LOGGER.exception("Falha no login")
-            msg = str(ex)
-            if "Wrong User ID" in msg:
-                msg = "E-mail não encontrado na LG. Confira o e-mail da conta LG ThinQ."
-            elif "assword" in msg:
-                msg = "Senha incorreta."
-            return {"ok": False, "error": msg or "Usuário ou senha inválidos"}
+            _LOGGER.warning("Falha no login com token: %s", ex)
+            return {"ok": False, "error": str(ex) or "Token inválido"}
 
-    def login_browser(self):
-        """Abre o login da LG numa janela e captura a URL de retorno automaticamente."""
-        try:
-            url = self._backend.get_login_url()
-        except Exception as ex:  # pylint: disable=broad-except
-            return {"ok": False, "error": f"Não foi possível obter a página de login: {ex}"}
-
-        login_win = webview.create_window("Entrar na conta LG", url, width=480, height=760)
-        result = {}
-        done = threading.Event()
-
-        def found(url):
-            if not done.is_set() and is_login_callback(url):
-                result["url"] = url
-                done.set()
-
-        def on_request(request):
-            # pega o redirecionamento de retorno mesmo que a página troque rápido demais
-            if "lgaccount.com" in request.url and "/resources/" not in request.url:
-                parsed = urlparse(request.url)
-                _LOGGER.info("login: %s %s%s params=%s", request.method, parsed.netloc,
-                             parsed.path, sorted(parse_qs(parsed.query)))
-            found(request.url)
-
-        def watch():
-            while not done.is_set():
-                try:
-                    found(login_win.get_current_url() or "")
-                except Exception:  # pylint: disable=broad-except
-                    break
-                time.sleep(0.3)
-            done.set()
-
-        login_win.events.request_sent += on_request
-        login_win.events.closed += done.set
-        threading.Thread(target=watch, daemon=True).start()
-        done.wait()
-        try:
-            login_win.destroy()
-        except Exception:  # pylint: disable=broad-except
-            pass
-
-        if "url" not in result:
-            return {"ok": False, "error": "Login cancelado"}
-        return self.login_url(result["url"])
-
-    def login_url(self, url):
-        try:
-            self._backend.login_with_url(url.strip())
-            return {"ok": True}
-        except Exception as ex:  # pylint: disable=broad-except
-            _LOGGER.exception("Falha no login por URL")
-            return {"ok": False, "error": str(ex) or "URL inválida"}
+    @staticmethod
+    def open_pat_site():
+        webbrowser.open(PAT_URL)
 
     def logout(self):
         self._backend.logout()

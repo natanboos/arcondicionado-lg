@@ -1,4 +1,4 @@
-"""Ponte entre a interface e a nuvem LG ThinQ (usa a biblioteca wideq do ha-smartthinq-sensors)."""
+"""Ponte entre a interface e a API oficial LG ThinQ Connect (SDK thinqconnect)."""
 
 from __future__ import annotations
 
@@ -7,56 +7,54 @@ import json
 import logging
 import threading
 import time
+import uuid
 from pathlib import Path
 
-from wideq import DeviceType, get_lge_device
-from wideq.core_exceptions import UseOfficialAPIError
-from wideq.core_async import ClientAsync
-from wideq.devices import ac as acmod
-from wideq.devices.ac import ACMode, AirConditionerDevice
+import aiohttp
+from thinqconnect import AirConditionerDevice, ThinQApi, ThinQAPIException
+from thinqconnect.const import DeviceType
+from thinqconnect.devices.const import Property
 
 _LOGGER = logging.getLogger(__name__)
 
 CONFIG_DIR = Path.home() / ".arcondicionado-lg"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
-POLL_INTERVAL = 60  # segundos entre leituras do aparelho
-MIN_REFRESH_GAP = 45  # leitura extra ao abrir o painel só se a última for mais antiga que isso
-# a LG bloqueia a conta (erro 9012) quando acha que há requisições demais: ao receber
-# um aviso dela, o app para de consultar a nuvem por um tempo
-BLOCK_PAUSE = 24 * 3600
-WARNING_PAUSE = 15 * 60
+PAT_URL = "https://connect-pat.lgthinq.com"
 
-# Modo "Auto" da interface: usa o primeiro modo automático suportado
-AUTO_MODES = [ACMode.ACO.name, ACMode.AI.name]
+POLL_VISIBLE = 60  # segundos entre leituras com o painel aberto
+POLL_HIDDEN = 10 * 60  # com o painel escondido na bandeja
+MIN_REFRESH_GAP = 45  # leitura extra ao abrir o painel só se a última for mais antiga que isso
+LIMIT_PAUSE = 60 * 60  # pausa ao receber "limite de chamadas excedido" (1306)
+
+# modo da interface -> modo da API oficial
+MODE_TO_API = {"COOL": "COOL", "DRY": "AIR_DRY", "FAN": "FAN", "AUTO": "AUTO", "HEAT": "HEAT"}
+API_TO_MODE = {v: k for k, v in MODE_TO_API.items()}
 
 FAN_LABELS = {
     "SLOW": "Muito baixo",
-    "SLOW_LOW": "Muito baixo",
     "LOW": "Baixo",
     "LOW_MID": "Médio-baixo",
     "MID": "Médio",
     "MID_HIGH": "Médio-alto",
     "HIGH": "Alto",
-    "POWER": "Potente",
     "AUTO": "Auto",
     "NATURE": "Natural",
+}
+TURBO = "POWER"  # vento "potente" faz o papel do botão Turbo
+
+ERROR_MESSAGES = {
+    "1103": "Token inválido. Gere um novo token pessoal no site da LG.",
+    "1218": "Token inválido. Gere um novo token pessoal no site da LG.",
+    "1302": "Token não encontrado. Gere um novo token pessoal no site da LG.",
+    "1304": "Há termos de uso pendentes. Abra o app LG ThinQ no celular e aceite.",
+    "1306": "Limite de consultas da LG atingido. O app espera um pouco e tenta de novo.",
+    "1222": "O ar-condicionado está desconectado do Wi-Fi.",
 }
 
 
 class AccountBlockedError(Exception):
-    """A LG bloqueou temporariamente o acesso desta conta."""
-
-
-def _lg_block_message(ex: BaseException) -> str | None:
-    """Mensagem do aviso de bloqueio/uso da API oficial, se for esse o erro."""
-    seen = set()
-    while ex is not None and id(ex) not in seen:
-        seen.add(id(ex))
-        if isinstance(ex, UseOfficialAPIError):
-            return str(ex) or "9006"
-        ex = ex.__cause__ or ex.__context__
-    return None
+    """A LG pediu para o app esperar antes de consultar de novo."""
 
 
 def load_config() -> dict:
@@ -71,23 +69,41 @@ def save_config(cfg: dict) -> None:
     CONFIG_FILE.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
 
 
+def friendly_error(ex: Exception) -> str:
+    if isinstance(ex, ThinQAPIException):
+        return ERROR_MESSAGES.get(ex.code, f"{ex.message} (código {ex.code})")
+    return str(ex) or ex.__class__.__name__
+
+
 class LGBackend:
-    """Executa a wideq num loop asyncio próprio, em uma thread separada."""
+    """Executa o SDK num loop asyncio próprio, em uma thread separada."""
 
     def __init__(self) -> None:
         self.cfg = load_config()
         self.cfg.setdefault("country", "BR")
-        self.cfg.setdefault("language", "pt-BR")
+        if len(self.cfg.get("client_id", "")) != 36:
+            # identificador fixo desta instalação (a API oficial pede um por cliente)
+            self.cfg["client_id"] = str(uuid.uuid4())
+        # dados do login antigo (API não oficial) não servem mais
+        for key in ("refresh_token", "oauth_url", "blocked_until", "language"):
+            self.cfg.pop(key, None)
+        save_config(self.cfg)
+
         self.loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self.loop.run_forever, daemon=True)
         self._thread.start()
-        self.client: ClientAsync | None = None
+        self._session: aiohttp.ClientSession | None = None
+        self.api: ThinQApi | None = None
         self.device: AirConditionerDevice | None = None
         self.devices: list[dict] = []
         self.error: str | None = None
+        self.online = False
         self.last_poll = 0.0
+        self.paused_until = 0.0
+        self.panel_visible = True
         self._poll_task = None
-        self._lock = None
+        self._lock: asyncio.Lock | None = None
+        self._wake: asyncio.Event | None = None
 
     # ---------- utilidades ----------
     def run(self, coro, timeout=60):
@@ -95,64 +111,41 @@ class LGBackend:
 
     @property
     def logged_in(self) -> bool:
-        return bool(self.cfg.get("refresh_token"))
+        return bool(self.cfg.get("pat"))
 
-    @property
-    def blocked_until(self) -> float:
-        return float(self.cfg.get("blocked_until", 0))
-
-    def _check_blocked(self) -> None:
-        remaining = self.blocked_until - time.time()
+    def _check_paused(self) -> None:
+        remaining = self.paused_until - time.time()
         if remaining > 0:
-            hours, minutes = int(remaining // 3600), int(remaining % 3600 // 60)
-            when = f"{hours}h{minutes:02d}" if hours else f"{minutes} min"
             raise AccountBlockedError(
-                "A LG pausou o acesso desta conta por excesso de consultas. "
-                f"O app volta a tentar sozinho em {when}."
+                "A LG pediu para o app consultar menos. Tentando de novo em "
+                f"{int(remaining // 60) + 1} min."
             )
 
-    def _register_block(self, message: str) -> None:
-        pause = BLOCK_PAUSE if "block" in message.lower() else WARNING_PAUSE
-        _LOGGER.warning("LG pediu para reduzir as consultas; pausando por %s s: %s",
-                        pause, message)
-        self.cfg["blocked_until"] = time.time() + pause
-        save_config(self.cfg)
-        self.error = message
-
-    def _client_id_cb(self, client_id: str) -> None:
-        self.cfg["client_id"] = client_id
-        save_config(self.cfg)
+    def _handle_api_error(self, ex: Exception) -> None:
+        if isinstance(ex, ThinQAPIException) and ex.code == "1306":
+            _LOGGER.warning("Limite de chamadas da LG atingido; pausando %s s", LIMIT_PAUSE)
+            self.paused_until = time.time() + LIMIT_PAUSE
 
     # ---------- autenticação ----------
-    def get_login_url(self) -> str:
-        return self.run(
-            ClientAsync.get_login_url(self.cfg["country"], self.cfg["language"])
-        )
-
-    def login_with_url(self, url: str) -> None:
-        info = self.run(
-            ClientAsync.oauth_info_from_url(url, self.cfg["country"], self.cfg["language"])
-        )
-        self._store_oauth(info)
-
-    def login_with_password(self, user: str, password: str) -> None:
-        info = self.run(
-            ClientAsync.oauth_info_from_user_login(
-                user, password, self.cfg["country"], self.cfg["language"]
-            )
-        )
-        self._store_oauth(info)
-
-    def _store_oauth(self, info: dict) -> None:
-        if not info or not info.get("refresh_token"):
-            raise RuntimeError("Não foi possível obter o token da LG")
-        self.cfg["refresh_token"] = info["refresh_token"]
-        self.cfg["oauth_url"] = info.get("oauth_url")
+    def login_with_pat(self, pat: str) -> None:
+        pat = pat.strip()
+        if not pat:
+            raise ValueError("Cole o token pessoal (PAT) gerado no site da LG")
+        self.run(self._test_pat(pat))
+        self.cfg["pat"] = pat
         save_config(self.cfg)
+
+    async def _test_pat(self, pat: str) -> None:
+        async with aiohttp.ClientSession() as session:
+            api = ThinQApi(session, pat, self.cfg["country"], self.cfg["client_id"])
+            try:
+                await api.async_get_device_list()
+            except ThinQAPIException as ex:
+                raise RuntimeError(friendly_error(ex)) from ex
 
     def logout(self) -> None:
         self.run(self._close())
-        for key in ("refresh_token", "oauth_url", "client_id", "device_id"):
+        for key in ("pat", "device_id"):
             self.cfg.pop(key, None)
         save_config(self.cfg)
 
@@ -160,146 +153,185 @@ class LGBackend:
         if self._poll_task:
             self._poll_task.cancel()
             self._poll_task = None
-        if self.client:
-            await self.client.close()
-        self.client = None
+        if self._session:
+            await self._session.close()
+        self._session = None
+        self.api = None
         self.device = None
 
     # ---------- conexão e aparelhos ----------
     def connect(self) -> None:
-        self._check_blocked()
+        self._check_paused()
         try:
-            self.run(self._connect(), timeout=120)
+            self.run(self._connect(), timeout=60)
         except Exception as ex:
-            if msg := _lg_block_message(ex):
-                self._register_block(msg)
-                self._check_blocked()
-            raise
+            self._handle_api_error(ex)
+            raise RuntimeError(friendly_error(ex)) from ex
 
     async def _connect(self):
         await self._close()
         self._lock = asyncio.Lock()
-        self.client = await ClientAsync.from_token(
-            self.cfg["refresh_token"],
-            country=self.cfg["country"],
-            language=self.cfg["language"],
-            oauth_url=self.cfg.get("oauth_url"),
-            client_id=self.cfg.get("client_id"),
-            update_clientid_callback=self._client_id_cb,
-        )
-        if not self.cfg.get("client_id") and self.client.client_id:
-            self._client_id_cb(self.client.client_id)
+        self._wake = asyncio.Event()
+        self._session = aiohttp.ClientSession()
+        self.api = ThinQApi(self._session, self.cfg["pat"], self.cfg["country"],
+                            self.cfg["client_id"])
 
-        acs = [d for d in (self.client.devices or []) if d.type == DeviceType.AC]
-        self.devices = [{"id": d.device_id, "name": d.name, "model": d.model_name} for d in acs]
+        acs = [
+            d for d in (await self.api.async_get_device_list() or [])
+            if d.get("deviceInfo", {}).get("deviceType") == DeviceType.AIR_CONDITIONER
+        ]
+        self.devices = [
+            {"id": d["deviceId"], "name": d["deviceInfo"].get("alias", "Ar-condicionado"),
+             "model": d["deviceInfo"].get("modelName", "")}
+            for d in acs
+        ]
         if not acs:
             raise RuntimeError("Nenhum ar-condicionado encontrado na sua conta LG ThinQ")
 
         wanted = self.cfg.get("device_id")
-        info = next((d for d in acs if d.device_id == wanted), acs[0])
-        devs = get_lge_device(self.client, info)
-        if not devs:
-            raise RuntimeError(f"Aparelho '{info.name}' não é suportado")
-        self.device = devs[0]
-        if not await self.device.init_device_info():
-            raise RuntimeError("Falha ao carregar as informações do modelo")
-        self.cfg["device_id"] = info.device_id
+        dev = next((d for d in acs if d["deviceId"] == wanted), acs[0])
+        info = dev["deviceInfo"]
+        profile = await self.api.async_get_device_profile(dev["deviceId"])
+        self.device = AirConditionerDevice(
+            thinq_api=self.api,
+            device_id=dev["deviceId"],
+            device_type=info.get("deviceType"),
+            model_name=info.get("modelName", ""),
+            alias=info.get("alias", "Ar-condicionado"),
+            reportable=info.get("reportable", False),
+            profile=profile,
+        )
+        self.cfg["device_id"] = dev["deviceId"]
         save_config(self.cfg)
         await self._poll()
         self._poll_task = asyncio.ensure_future(self._poll_loop())
 
     async def _poll(self):
-        if self.blocked_until > time.time():
+        if self.paused_until > time.time():
             return
         async with self._lock:
             try:
-                await self.device.poll()
+                status = await self.api.async_get_device_status(self.device.device_id)
+                self.device.set_status(status)
                 self.error = None
+                self.online = True
             except Exception as ex:  # pylint: disable=broad-except
                 _LOGGER.warning("Falha ao ler o aparelho: %s", ex)
-                if msg := _lg_block_message(ex):
-                    self._register_block(msg)
-                else:
-                    self.error = str(ex) or ex.__class__.__name__
+                self._handle_api_error(ex)
+                self.error = friendly_error(ex)
+                self.online = False
             self.last_poll = time.time()
 
     async def _poll_loop(self):
         while True:
-            await asyncio.sleep(POLL_INTERVAL)
-            await self._poll()
+            interval = POLL_VISIBLE if self.panel_visible else POLL_HIDDEN
+            self._wake.clear()
+            try:
+                # abrir o painel acorda o loop para voltar ao ritmo rápido
+                await asyncio.wait_for(self._wake.wait(), interval)
+            except asyncio.TimeoutError:
+                await self._poll()
+
+    def set_panel_visible(self, visible: bool) -> None:
+        self.panel_visible = visible
+        if visible and self._wake:
+            self.loop.call_soon_threadsafe(self._wake.set)
 
     def refresh(self) -> None:
         if self.device and time.time() - self.last_poll > MIN_REFRESH_GAP:
             self.run(self._poll())
 
-    # ---------- estado ----------
-    def _swing_support(self) -> tuple[bool, bool]:
-        dev = self.device
-        v = "Swing" in dev.vertical_step_modes or bool(
-            dev._is_mode_supported(acmod.SUPPORT_VANE_VSWING)  # pylint: disable=protected-access
-        )
-        h = "Swing" in dev.horizontal_step_modes or bool(
-            dev._is_mode_supported(acmod.SUPPORT_VANE_HSWING)  # pylint: disable=protected-access
-        )
-        return v, h
+    # ---------- leitura do perfil e do estado ----------
+    def _prop(self, prop: Property) -> dict | None:
+        try:
+            return self.device.profiles.get_property(prop)
+        except AttributeError:
+            return None
+
+    def _writable_values(self, prop: Property) -> list:
+        p = self._prop(prop)
+        values = p.get("w") if p else None
+        return values if isinstance(values, list) else []
+
+    def _can_write(self, prop: Property) -> bool:
+        try:
+            return self.device.profiles.check_attribute_writable(prop)
+        except AttributeError:
+            return False
+
+    def _get(self, prop: Property):
+        try:
+            return self.device.get_status(prop)
+        except AttributeError:
+            return None
+
+    def _temp_range(self) -> tuple[float, float, float]:
+        for prop in (Property.TARGET_TEMPERATURE_C, Property.COOL_TARGET_TEMPERATURE_C):
+            p = self._prop(prop)
+            rng = p.get("w") if p else None
+            if isinstance(rng, dict) and "min" in rng:
+                return rng["min"], rng["max"], rng.get("step", 1)
+        lo = self._get(Property.MIN_TARGET_TEMPERATURE_C) or 16
+        hi = self._get(Property.MAX_TARGET_TEMPERATURE_C) or 30
+        return lo, hi, 1
+
+    def _target_temp(self, api_mode: str | None):
+        by_mode = {
+            "COOL": Property.COOL_TARGET_TEMPERATURE_C,
+            "HEAT": Property.HEAT_TARGET_TEMPERATURE_C,
+            "AUTO": Property.AUTO_TARGET_TEMPERATURE_C,
+        }
+        for prop in (Property.TARGET_TEMPERATURE_C, by_mode.get(api_mode)):
+            if prop and (value := self._get(prop)) is not None:
+                return value
+        return None
 
     def state(self) -> dict:
         dev = self.device
         if not dev:
             return {"ready": False}
-        st = dev.status
-        v_sup, h_sup = self._swing_support()
-        modes = dev.op_modes
-        auto_mode = next((m for m in AUTO_MODES if m in modes), None)
-        fan_speeds = [f for f in dev.fan_speeds if f in FAN_LABELS]
 
-        data = {
+        api_modes = self._writable_values(Property.CURRENT_JOB_MODE)
+        fan_values = self._writable_values(Property.WIND_STRENGTH)
+        v_sup = self._can_write(Property.WIND_ROTATE_UP_DOWN)
+        h_sup = self._can_write(Property.WIND_ROTATE_LEFT_RIGHT)
+        lo, hi, step = self._temp_range()
+        api_mode = self._get(Property.CURRENT_JOB_MODE)
+        wind = self._get(Property.WIND_STRENGTH)
+        sleep_h = self._get(Property.SLEEP_TIMER_RELATIVE_HOUR_TO_STOP) or 0
+        sleep_m = self._get(Property.SLEEP_TIMER_RELATIVE_MINUTE_TO_STOP) or 0
+        humidity = self._get(Property.HUMIDITY)
+
+        return {
             "ready": True,
-            "name": dev.name,
+            "name": dev.alias,
             "devices": self.devices,
-            "device_id": dev.device_info.device_id,
+            "device_id": dev.device_id,
             "error": self.error,
-            "blocked": self.blocked_until > time.time(),
-            "online": st is not None and self.error is None,
-            "min_temp": dev.target_temperature_min or 16,
-            "max_temp": dev.target_temperature_max or 30,
-            "temp_step": dev.target_temperature_step or 1,
-            "modes": {
-                "COOL": ACMode.COOL.name in modes,
-                "DRY": ACMode.DRY.name in modes,
-                "FAN": ACMode.FAN.name in modes,
-                "AUTO": auto_mode is not None,
-                "HEAT": ACMode.HEAT.name in modes,
-            },
-            "fan_speeds": [{"key": f, "label": FAN_LABELS[f]} for f in fan_speeds],
+            "blocked": self.paused_until > time.time(),
+            "online": self.online,
+            "min_temp": lo,
+            "max_temp": hi,
+            "temp_step": step,
+            "modes": {m: MODE_TO_API[m] in api_modes for m in MODE_TO_API},
+            "fan_speeds": [{"key": f, "label": FAN_LABELS[f]} for f in fan_values if f in FAN_LABELS],
             "directions": self._direction_options(v_sup, h_sup),
-            "jet_supported": dev.supported_mode_jet != acmod.JetModeSupport.NONE,
-            "airclean_supported": dev.is_mode_airclean_supported,
-            "sleep_range": dev.sleep_time_range,
+            "jet_supported": TURBO in fan_values,
+            "airclean_supported": "START" in self._writable_values(Property.AIR_CLEAN_OPERATION_MODE),
+            "sleep_range": [0, 7 * 60],
+            "is_on": self._get(Property.AIR_CON_OPERATION_MODE) == "POWER_ON",
+            "mode": API_TO_MODE.get(api_mode, api_mode),
+            "target_temp": self._target_temp(api_mode),
+            "room_temp": self._get(Property.CURRENT_TEMPERATURE_C),
+            "humidity": humidity if humidity else None,
+            "fan_speed": wind,
+            "direction": self._current_direction(v_sup, h_sup),
+            "jet": wind == TURBO,
+            "jet_available": True,
+            "airclean": self._get(Property.AIR_CLEAN_OPERATION_MODE) == "START",
+            "sleep_time": sleep_h * 60 + sleep_m,
+            "sleep_available": self._can_write(Property.SLEEP_TIMER_RELATIVE_HOUR_TO_STOP),
         }
-        if st is None:
-            return data
-
-        op_mode = st.operation_mode
-        if op_mode in AUTO_MODES:
-            op_mode = "AUTO"
-        data.update(
-            {
-                "is_on": st.is_on,
-                "mode": op_mode,
-                "target_temp": st.target_temp,
-                "room_temp": st.current_temp,
-                "humidity": st.humidity,
-                "fan_speed": st.fan_speed,
-                "direction": self._current_direction(st, v_sup, h_sup),
-                "jet": bool(st.mode_jet),
-                "jet_available": dev.is_mode_jet_available,
-                "airclean": bool(st.mode_airclean),
-                "sleep_time": st.reservation_sleep_time or 0,
-                "sleep_available": dev.is_reservation_sleep_time_available,
-            }
-        )
-        return data
 
     @staticmethod
     def _direction_options(v_sup: bool, h_sup: bool) -> list[dict]:
@@ -312,10 +344,9 @@ class LGBackend:
             opts.append({"key": "BOTH", "label": "Ambas"})
         return opts
 
-    @staticmethod
-    def _current_direction(st, v_sup: bool, h_sup: bool) -> str:
-        v = v_sup and (st.is_vertical_swing_on or st.vertical_step_mode == "Swing")
-        h = h_sup and (st.is_horizontal_swing_on or st.horizontal_step_mode == "Swing")
+    def _current_direction(self, v_sup: bool, h_sup: bool) -> str:
+        v = v_sup and bool(self._get(Property.WIND_ROTATE_UP_DOWN))
+        h = h_sup and bool(self._get(Property.WIND_ROTATE_LEFT_RIGHT))
         if v and h:
             return "BOTH"
         if v:
@@ -326,14 +357,12 @@ class LGBackend:
 
     # ---------- comandos ----------
     def command(self, name: str, value) -> dict:
-        self._check_blocked()
+        self._check_paused()
         try:
             self.run(self._command(name, value))
         except Exception as ex:
-            if msg := _lg_block_message(ex):
-                self._register_block(msg)
-                self._check_blocked()
-            raise
+            self._handle_api_error(ex)
+            raise RuntimeError(friendly_error(ex)) from ex
         return self.state()
 
     async def _command(self, name: str, value):
@@ -342,40 +371,50 @@ class LGBackend:
             raise RuntimeError("Aparelho não conectado")
         async with self._lock:
             if name == "power":
-                await dev.power(bool(value))
+                await dev.set_air_con_operation_mode("POWER_ON" if value else "POWER_OFF")
             elif name == "temp":
-                await dev.set_target_temp(float(value))
+                await self._set_temp(float(value))
             elif name == "mode":
-                if value == "AUTO":
-                    value = next(m for m in AUTO_MODES if m in dev.op_modes)
-                await dev.set_op_mode(value)
+                await dev.set_current_job_mode(MODE_TO_API[value])
             elif name == "fan":
-                await dev.set_fan_speed(value)
+                await dev.set_wind_strength(value)
             elif name == "direction":
-                await self._set_direction(value)
+                if self._can_write(Property.WIND_ROTATE_UP_DOWN):
+                    await dev.set_wind_rotate_up_down(value in ("VERTICAL", "BOTH"))
+                if self._can_write(Property.WIND_ROTATE_LEFT_RIGHT):
+                    await dev.set_wind_rotate_left_right(value in ("HORIZONTAL", "BOTH"))
             elif name == "jet":
-                await dev.set_mode_jet(bool(value))
+                if value:
+                    self.cfg["fan_before_turbo"] = self._get(Property.WIND_STRENGTH)
+                    await dev.set_wind_strength(TURBO)
+                else:
+                    previous = self.cfg.get("fan_before_turbo")
+                    fans = self._writable_values(Property.WIND_STRENGTH)
+                    await dev.set_wind_strength(previous if previous in fans and previous != TURBO
+                                                else "AUTO" if "AUTO" in fans else fans[0])
             elif name == "airclean":
-                await dev.set_mode_airclean(bool(value))
+                await dev.set_air_clean_operation_mode("START" if value else "STOP")
             elif name == "sleep":
-                await dev.set_reservation_sleep_time(int(value))
+                minutes = int(value)
+                await dev.set_sleep_timer_relative_time_to_stop(minutes // 60, minutes % 60)
             else:
                 raise ValueError(f"Comando desconhecido: {name}")
+            # o comando foi aceito: relê o estado para a tela refletir o aparelho
+            await asyncio.sleep(1.5)
+            status = await self.api.async_get_device_status(dev.device_id)
+            dev.set_status(status)
+            self.last_poll = time.time()
 
-    async def _set_direction(self, value: str):
+    async def _set_temp(self, temp: float):
         dev = self.device
-        v_sup, h_sup = self._swing_support()
-        want_v = value in ("VERTICAL", "BOTH")
-        want_h = value in ("HORIZONTAL", "BOTH")
-        if v_sup:
-            if "Swing" in dev.vertical_step_modes:
-                off = "Off" if "Off" in dev.vertical_step_modes else dev.vertical_step_modes[0]
-                await dev.set_vertical_step_mode("Swing" if want_v else off)
-            else:
-                await dev.vertical_swing_mode(want_v)
-        if h_sup:
-            if "Swing" in dev.horizontal_step_modes:
-                off = "Off" if "Off" in dev.horizontal_step_modes else dev.horizontal_step_modes[0]
-                await dev.set_horizontal_step_mode("Swing" if want_h else off)
-            else:
-                await dev.horizontal_swing_mode(want_h)
+        temp = int(temp) if float(temp).is_integer() else temp
+        if self._can_write(Property.TARGET_TEMPERATURE_C):
+            await dev._set_target_temperature(temp, "C")  # pylint: disable=protected-access
+            return
+        api_mode = self._get(Property.CURRENT_JOB_MODE)
+        setter = {
+            "COOL": dev.set_cool_target_temperature_c,
+            "HEAT": dev.set_heat_target_temperature_c,
+            "AUTO": dev.set_auto_target_temperature_c,
+        }.get(api_mode, dev.set_cool_target_temperature_c)
+        await setter(temp)
